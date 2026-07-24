@@ -36,6 +36,26 @@ docker build -t infinite-canvas .
 docker run --rm -p 3000:3000 infinite-canvas
 ```
 
+## macOS 桌面版
+
+桌面版位于 `desktop/`，当前面向 Apple Silicon Mac，使用 Electron 打包。首次安装依赖后，在项目目录执行：
+
+```bash
+cd web
+npm install --legacy-peer-deps
+cd ../desktop
+npm install
+npm run dev
+```
+
+生成未签名的 `.app` 和 `.dmg`：
+
+```bash
+npm run make
+```
+
+桌面版不自动迁移浏览器数据，也不自动启动 Canvas Agent。需要使用 Agent 时，另开终端运行 `npx -y @basketikun/canvas-agent`，再在画布中填写连接信息。
+
 ## 首次使用建议
 
 - 先打开右上角配置弹窗，填入自己的 `Base URL`、`API Key` 和模型名。

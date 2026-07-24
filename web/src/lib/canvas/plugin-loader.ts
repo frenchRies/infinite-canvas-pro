@@ -118,8 +118,9 @@ export async function ensurePluginsLoaded() {
 // 但保留用户的 enabled 开关 —— 否则改了插件版本后,持久化 store 里的旧 version 永不更新。
 async function loadLocalPlugins() {
     let urls: unknown;
+    const manifestUrl = new URL("plugins/index.json", `${window.location.origin}/`).toString();
     try {
-        const response = await fetch("/plugins/index.json");
+        const response = await fetch(manifestUrl);
         if (!response.ok) return;
         urls = await response.json();
     } catch {
@@ -130,7 +131,8 @@ async function loadLocalPlugins() {
     await Promise.all(
         urls.map(async (url: string) => {
             try {
-                const source = await fetchPluginSource(withCacheBust(url));
+                const sourceUrl = new URL(url, manifestUrl).toString();
+                const source = await fetchPluginSource(withCacheBust(sourceUrl));
                 const plugin = await evaluatePluginSource(source);
                 const existing = store.plugins.find((item) => item.id === plugin.id);
                 store.upsert({
@@ -138,7 +140,7 @@ async function loadLocalPlugins() {
                     name: plugin.name || plugin.id,
                     version: plugin.version || "0.0.0",
                     description: plugin.description,
-                    url,
+                    url: sourceUrl,
                     source,
                     enabled: existing?.enabled ?? false, // 保留用户开关,新发现默认关闭
                     local: true,
