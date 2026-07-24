@@ -105,6 +105,9 @@ export const defaultConfig: AiConfig = {
     canvasImageCount: "3",
 };
 
+const desktopDefaultConfig = (typeof window !== "undefined" ? (window as Window & { __DESKTOP_AI_DEFAULT__?: Partial<AiConfig> }).__DESKTOP_AI_DEFAULT__ : undefined);
+if (desktopDefaultConfig) Object.assign(defaultConfig, desktopDefaultConfig);
+
 export const defaultWebdavSyncConfig: WebdavSyncConfig = {
     url: "",
     username: "",
@@ -206,7 +209,8 @@ export const useConfigStore = create<ConfigStore>()(
                 const persistedState = (persisted || {}) as Partial<ConfigStore>;
                 const persistedConfig = (persistedState.config || {}) as Partial<AiConfig>;
                 const persistedWebdav = (persistedState.webdav || {}) as Partial<WebdavSyncConfig>;
-                const config = { ...defaultConfig, ...persistedConfig };
+                const useDesktopDefault = desktopDefaultConfig && persistedConfig.channels?.length === 1 && persistedConfig.channels[0]?.id === "default" && !persistedConfig.channels[0]?.apiKey;
+                const config = { ...defaultConfig, ...persistedConfig, ...(useDesktopDefault ? desktopDefaultConfig : {}) };
                 if (!Array.isArray(persistedConfig.channels)) config.channels = [];
                 const channels = normalizeChannels(config);
                 const models = modelOptionsFromChannels(channels);

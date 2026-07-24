@@ -5,6 +5,10 @@ const path = require("node:path");
 
 const DEV_URL = "http://localhost:3000";
 const STATIC_PORT = 3210;
+let DESKTOP_AI_DEFAULT;
+try {
+    DESKTOP_AI_DEFAULT = require("./default-config.local.cjs");
+} catch {}
 let mainWindow;
 let staticServer;
 let staticUrl;
@@ -51,6 +55,11 @@ function contentType(filePath) {
 function startStaticServer(root) {
     staticServer = http.createServer((request, response) => {
         const requestUrl = new URL(request.url || "/", "http://127.0.0.1");
+        if (requestUrl.pathname === "/config.js" && DESKTOP_AI_DEFAULT) {
+            response.setHeader("Content-Type", "text/javascript; charset=utf-8");
+            response.end(`window.__DESKTOP_AI_DEFAULT__ = ${JSON.stringify(DESKTOP_AI_DEFAULT)};`);
+            return;
+        }
         const requestedPath = decodeURIComponent(requestUrl.pathname);
         const relativePath = requestedPath === "/" ? "index.html" : requestedPath.slice(1);
         const candidate = path.resolve(root, relativePath);
