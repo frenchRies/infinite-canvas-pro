@@ -4,6 +4,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const DEV_URL = "http://localhost:3000";
+const STATIC_PORT = 3210;
 let mainWindow;
 let staticServer;
 let staticUrl;
@@ -70,7 +71,7 @@ function startStaticServer(root) {
 
     return new Promise((resolve, reject) => {
         staticServer.once("error", reject);
-        staticServer.listen(0, "127.0.0.1", () => {
+        staticServer.listen(STATIC_PORT, "127.0.0.1", () => {
             const address = staticServer.address();
             if (!address || typeof address === "string") return reject(new Error("桌面版本地服务启动失败"));
             resolve(`http://127.0.0.1:${address.port}`);
