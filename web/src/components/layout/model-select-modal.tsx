@@ -3,7 +3,7 @@ import { RefreshCw, Search } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import { fetchChannelModels } from "@/services/api/image";
-import type { ModelChannel } from "@/stores/use-config-store";
+import { modelDisplayName, type ModelChannel } from "@/stores/use-config-store";
 
 // 选择渠道模型弹窗：拉取上游模型列表或手动增加，勾选后才会进入渠道模型列表。
 export function ModelSelectModal({ open, channel, selectedNames, onConfirm, onClose }: { open: boolean; channel: ModelChannel | null; selectedNames: string[]; onConfirm: (names: string[]) => void; onClose: () => void }) {
@@ -29,7 +29,7 @@ export function ModelSelectModal({ open, channel, selectedNames, onConfirm, onCl
     const currentList = activeTab === "new" ? fetched : existing;
     const visibleList = useMemo(() => {
         const keyword = search.trim().toLowerCase();
-        return keyword ? currentList.filter((name) => name.toLowerCase().includes(keyword)) : currentList;
+        return keyword ? currentList.filter((name) => name.toLowerCase().includes(keyword) || modelDisplayName(name).toLowerCase().includes(keyword)) : currentList;
     }, [currentList, search]);
     const visibleSelectedCount = visibleList.filter((name) => selected.has(name)).length;
 
@@ -140,7 +140,7 @@ export function ModelSelectModal({ open, channel, selectedNames, onConfirm, onCl
                     {visibleList.map((name) => (
                         <Checkbox key={name} checked={selected.has(name)} onChange={(event) => toggle(name, event.target.checked)}>
                             <span className="truncate" title={name}>
-                                {name}
+                                {modelDisplayName(name)}
                             </span>
                         </Checkbox>
                     ))}

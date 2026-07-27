@@ -110,6 +110,21 @@ export default function ImagePage() {
         void refreshLogs();
     }, []);
 
+    useEffect(() => {
+        const handleStudioContext = (event: Event) => {
+            const detail = (event as CustomEvent<{ slug?: string; index?: number }>).detail;
+            if (detail.slug !== "image") return;
+            if (detail.index === 0) {
+                setLogsOpen(true);
+                return;
+            }
+            const targetId = detail.index === 1 ? "image-reference-panel" : "image-parameter-panel";
+            document.getElementById(targetId)?.scrollIntoView({ behavior: "smooth", block: "start" });
+        };
+        window.addEventListener("studio-context-select", handleStudioContext);
+        return () => window.removeEventListener("studio-context-select", handleStudioContext);
+    }, []);
+
     const addReferences = async (files?: FileList | null) => {
         const imageFiles = Array.from(files || []).filter((file) => file.type.startsWith("image/"));
         const nextReferences = await Promise.all(
@@ -366,7 +381,7 @@ export default function ImagePage() {
     };
 
     return (
-        <div className="flex h-full flex-col overflow-hidden bg-stone-50 text-stone-900 dark:bg-stone-950 dark:text-stone-100">
+        <div className="studio-generator-page flex h-full flex-col overflow-hidden bg-stone-50 text-stone-900 dark:bg-stone-950 dark:text-stone-100">
             <main className="grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-y-auto p-3 lg:grid-cols-[300px_minmax(0,1fr)] lg:overflow-hidden xl:grid-cols-[320px_minmax(0,1fr)]">
                 <aside className="thin-scrollbar hidden min-h-0 overflow-y-auto rounded-lg border border-stone-200 bg-card p-4 shadow-sm dark:border-stone-800 lg:block">
                     <LogPanel
@@ -387,7 +402,7 @@ export default function ImagePage() {
                                 <div className="min-w-0">
                                     <h1 className="text-2xl font-semibold text-stone-950 dark:text-stone-100">生图工作台</h1>
                                 </div>
-                                <div className="flex shrink-0 gap-2 lg:hidden">
+                                <div className="studio-generator-actions flex shrink-0 gap-2 lg:hidden">
                                     <Button icon={<History className="size-4" />} onClick={() => setLogsOpen(true)}>
                                         记录
                                     </Button>
@@ -414,7 +429,7 @@ export default function ImagePage() {
                                 <Input.TextArea value={prompt} onChange={(event) => setPrompt(event.target.value)} rows={7} placeholder="描述画面主体、风格、构图、光线和用途" />
                             </div>
 
-                            <div className="min-w-0">
+                            <div id="image-reference-panel" className="min-w-0">
                                 <div className="mb-2 flex items-center justify-between gap-3">
                                     <span className="text-base font-semibold">参考图</span>
                                     <div className="flex gap-2">
@@ -462,7 +477,7 @@ export default function ImagePage() {
                                 </Button>
                             </div>
 
-                            <div className="hidden gap-4 sm:grid sm:grid-cols-2">
+                            <div id="image-parameter-panel" className="hidden gap-4 sm:grid sm:grid-cols-2">
                                 <GenerationSettings config={effectiveConfig} model={model} updateConfig={updateConfig} openConfigDialog={openConfigDialog} />
                             </div>
                         </div>

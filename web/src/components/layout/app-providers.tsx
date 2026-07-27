@@ -21,15 +21,17 @@ const queryClient = new QueryClient({
 
 export function AppProviders({ children }: { children: ReactNode }) {
     const theme = useThemeStore((state) => state.theme);
+    const uiStyle = useThemeStore((state) => state.uiStyle);
     const dark = theme === "dark";
 
     useEffect(() => {
         document.documentElement.classList.toggle("dark", dark);
         document.documentElement.style.colorScheme = theme;
-    }, [dark, theme]);
+        document.documentElement.dataset.uiStyle = uiStyle;
+    }, [dark, theme, uiStyle]);
 
     return (
-        <ConfigProvider locale={zhCN} theme={getAntThemeConfig(dark)}>
+        <ConfigProvider locale={zhCN} theme={getAntThemeConfig(dark, uiStyle)}>
             <ProConfigProvider dark={dark}>
                 <App>
                     <QueryClientProvider client={queryClient}>

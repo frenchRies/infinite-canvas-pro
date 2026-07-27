@@ -12,6 +12,8 @@ import { VideoSettingsPanel, normalizeVideoResolutionValue, normalizeVideoSizeVa
 import { canvasThemes } from "@/lib/canvas-theme";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
 import { boolConfig, isSeedanceVideoConfig, normalizeSeedanceRatio, seedanceReferenceLabel, seedanceVideoReferenceError, seedanceVideoReferenceHint, SEEDANCE_REFERENCE_LIMITS } from "@/lib/seedance-video";
+import { isGrokImagine15VideoModel } from "@/lib/grok-imagine-video";
+import { isKkaiSeeddanceModel, KKAI_SEEDDANCE_REFERENCE_LIMITS, kkaiSeeddanceReferenceError } from "@/lib/kkai-seeddance";
 import { deleteStoredMedia, resolveMediaUrl, uploadMediaFile } from "@/services/file-storage";
 import { resolveImageUrl, uploadImage } from "@/services/image-storage";
 import { createVideoGenerationTask, pollVideoGenerationTask, storeGeneratedVideo, type VideoGenerationTask } from "@/services/api/video";
@@ -114,16 +116,33 @@ export default function VideoPage() {
         void refreshLogs();
     }, []);
 
+    useEffect(() => {
+        const handleStudioContext = (event: Event) => {
+            const detail = (event as CustomEvent<{ slug?: string; index?: number }>).detail;
+            if (detail.slug !== "video") return;
+            if (detail.index === 0) {
+                setLogsOpen(true);
+                return;
+            }
+            const targetId = detail.index === 1 ? "video-reference-panel" : "video-parameter-panel";
+            document.getElementById(targetId)?.scrollIntoView({ behavior: "smooth", block: "start" });
+        };
+        window.addEventListener("studio-context-select", handleStudioContext);
+        return () => window.removeEventListener("studio-context-select", handleStudioContext);
+    }, []);
+
     const addReferences = async (files?: FileList | null) => {
         const selectedFiles = Array.from(files || []);
+        const limits = referenceLimitsForModel(model);
+        const imageMaxBytes = isGrokImagine15VideoModel(model) ? 20 * 1024 * 1024 : limits.imageMaxBytes;
         const unsupported = selectedFiles.filter((file) => !file.type.startsWith("image/") && !file.type.startsWith("video/") && !isSupportedAudioFile(file));
         if (unsupported.length) message.warning("已忽略不支持的参考资产，请使用图片、mp4/mov 视频或 mp3/wav 音频");
-        const imageFiles = selectedFiles.filter((file) => file.type.startsWith("image/") && file.size <= SEEDANCE_REFERENCE_LIMITS.imageMaxBytes).slice(0, SEEDANCE_REFERENCE_LIMITS.images - references.length);
-        const videoFiles = selectedFiles.filter((file) => file.type.startsWith("video/") && file.size <= SEEDANCE_REFERENCE_LIMITS.videoMaxBytes).slice(0, SEEDANCE_REFERENCE_LIMITS.videos - videoReferences.length);
-        const audioFiles = selectedFiles.filter((file) => isSupportedAudioFile(file) && file.size <= SEEDANCE_REFERENCE_LIMITS.audioMaxBytes).slice(0, SEEDANCE_REFERENCE_LIMITS.audios - audioReferences.length);
-        if (selectedFiles.some((file) => file.type.startsWith("image/") && file.size > SEEDANCE_REFERENCE_LIMITS.imageMaxBytes)) message.warning("已忽略超过 30MB 的参考图");
-        if (selectedFiles.some((file) => file.type.startsWith("video/") && file.size > SEEDANCE_REFERENCE_LIMITS.videoMaxBytes)) message.warning("已忽略超过 50MB 的参考视频");
-        if (selectedFiles.some((file) => isSupportedAudioFile(file) && file.size > SEEDANCE_REFERENCE_LIMITS.audioMaxBytes)) message.warning("已忽略超过 15MB 的参考音频");
+        const imageFiles = selectedFiles.filter((file) => file.type.startsWith("image/") && file.size <= imageMaxBytes).slice(0, limits.images - references.length);
+        const videoFiles = selectedFiles.filter((file) => file.type.startsWith("video/") && file.size <= limits.videoMaxBytes).slice(0, limits.videos - videoReferences.length);
+        const audioFiles = selectedFiles.filter((file) => isSupportedAudioFile(file) && file.size <= limits.audioMaxBytes).slice(0, limits.audios - audioReferences.length);
+        if (selectedFiles.some((file) => file.type.startsWith("image/") && file.size > imageMaxBytes)) message.warning(`已忽略超过 ${Math.floor(imageMaxBytes / 1024 / 1024)}MB 的参考图`);
+        if (selectedFiles.some((file) => file.type.startsWith("video/") && file.size > limits.videoMaxBytes)) message.warning(`已忽略超过 ${Math.floor(limits.videoMaxBytes / 1024 / 1024)}MB 的参考视频`);
+        if (selectedFiles.some((file) => isSupportedAudioFile(file) && file.size > limits.audioMaxBytes)) message.warning(`已忽略超过 ${Math.floor(limits.audioMaxBytes / 1024 / 1024)}MB 的参考音频`);
         const nextReferences = await Promise.all(
             imageFiles.map(async (file) => {
                 const image = await uploadImage(file);
@@ -141,14 +160,15 @@ export default function VideoPage() {
             await Promise.all(
                 audioFiles.map(async (file) => {
                     const audio = await uploadMediaFile(file, "audio-reference");
-                    return { id: nanoid(), name: file.name, type: audio.mimeType, url: audio.url, storageKey: audio.storageKey, durationMs: audio.durationMs };
+                    return { id: nanoid(), name: file.name, type: audio.mimeType, url: audio.url, storageKey: audio.storageKey, bytes: audio.bytes, durationMs: audio.durationMs };
                 }),
             ),
             message.warning,
+            !isKkaiSeeddanceModel(model),
         );
-        setReferences((value) => [...value, ...nextReferences].slice(0, SEEDANCE_REFERENCE_LIMITS.images));
-        setVideoReferences((value) => [...value, ...nextVideoReferences].slice(0, SEEDANCE_REFERENCE_LIMITS.videos));
-        setAudioReferences((value) => [...value, ...nextAudioReferences].slice(0, SEEDANCE_REFERENCE_LIMITS.audios));
+        setReferences((value) => [...value, ...nextReferences].slice(0, limits.images));
+        setVideoReferences((value) => [...value, ...nextVideoReferences].slice(0, limits.videos));
+        setAudioReferences((value) => [...value, ...nextAudioReferences].slice(0, limits.audios));
     };
 
     const addReferencesFromClipboard = async () => {
@@ -160,12 +180,12 @@ export default function VideoPage() {
                 return;
             }
             const nextReferences = await Promise.all(
-                blobs.slice(0, SEEDANCE_REFERENCE_LIMITS.images - references.length).map(async (blob, index) => {
+                blobs.slice(0, referenceLimitsForModel(model).images - references.length).map(async (blob, index) => {
                     const image = await uploadImage(blob);
                     return { id: nanoid(), name: `clipboard-${index + 1}.png`, type: image.mimeType, dataUrl: image.url, storageKey: image.storageKey };
                 }),
             );
-            setReferences((value) => [...value, ...nextReferences].slice(0, SEEDANCE_REFERENCE_LIMITS.images));
+            setReferences((value) => [...value, ...nextReferences].slice(0, referenceLimitsForModel(model).images));
             message.success(`已读取 ${nextReferences.length} 张参考图`);
         } catch {
             message.error("剪切板里没有可读取的图片");
@@ -234,10 +254,18 @@ export default function VideoPage() {
             openConfigDialog(true);
             return null;
         }
-        const videoReferenceError = seedanceVideoReferenceError(videoReferences);
-        if (videoReferenceError) {
-            message.error(`${videoReferenceError}。${seedanceVideoReferenceHint}`);
-            return null;
+        if (isKkaiSeeddanceModel(model)) {
+            const referenceError = kkaiSeeddanceReferenceError(references.length, videoReferences.length, audioReferences.length);
+            if (referenceError) {
+                message.error(referenceError);
+                return null;
+            }
+        } else {
+            const videoReferenceError = seedanceVideoReferenceError(videoReferences);
+            if (videoReferenceError) {
+                message.error(`${videoReferenceError}。${seedanceVideoReferenceHint}`);
+                return null;
+            }
         }
         return { text, config: buildVideoConfig(effectiveConfig, model), references: [...references], videoReferences: [...videoReferences], audioReferences: [...audioReferences] };
     };
@@ -268,9 +296,9 @@ export default function VideoPage() {
             setPrompt(payload.content);
         } else if (payload.kind === "image") {
             const stored = await uploadImage(payload.dataUrl);
-            setReferences((value) => [...value, { id: nanoid(), name: payload.title, type: stored.mimeType, dataUrl: stored.url, storageKey: stored.storageKey }].slice(0, SEEDANCE_REFERENCE_LIMITS.images));
+            setReferences((value) => [...value, { id: nanoid(), name: payload.title, type: stored.mimeType, dataUrl: stored.url, storageKey: stored.storageKey }].slice(0, referenceLimitsForModel(model).images));
         } else if (payload.kind === "video") {
-            setVideoReferences((value) => [...value, { id: nanoid(), name: payload.title, type: "video/mp4", url: payload.url, storageKey: payload.storageKey, width: payload.width, height: payload.height }].slice(0, SEEDANCE_REFERENCE_LIMITS.videos));
+            setVideoReferences((value) => [...value, { id: nanoid(), name: payload.title, type: "video/mp4", url: payload.url, storageKey: payload.storageKey, width: payload.width, height: payload.height }].slice(0, referenceLimitsForModel(model).videos));
         }
         setAssetPickerOpen(false);
     };
@@ -349,7 +377,7 @@ export default function VideoPage() {
                 }
                 if (state.status === "failed") throw new Error(state.error);
                 if (attempt === 119) throw new Error("视频生成超时，请稍后重试");
-                await delay(log.task.provider === "seedance" ? 5000 : 2500);
+                await delay(log.task.provider === "seedance" || log.task.provider === "seeddance" || log.task.provider === "grok" ? 5000 : 2500);
             }
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : "生成失败";
@@ -383,7 +411,7 @@ export default function VideoPage() {
     };
 
     return (
-        <div className="flex h-full flex-col overflow-hidden bg-stone-50 text-stone-900 dark:bg-stone-950 dark:text-stone-100">
+        <div className="studio-generator-page flex h-full flex-col overflow-hidden bg-stone-50 text-stone-900 dark:bg-stone-950 dark:text-stone-100">
             <main className="grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-y-auto p-3 lg:grid-cols-[300px_minmax(0,1fr)] lg:overflow-hidden xl:grid-cols-[320px_minmax(0,1fr)]">
                 <aside className="thin-scrollbar hidden min-h-0 overflow-y-auto rounded-lg border border-stone-200 bg-card p-4 shadow-sm dark:border-stone-800 lg:block">
                     <LogPanel logs={logs} selectedLogIds={selectedLogIds} activeLogId={previewLog?.id} onSelectedLogIdsChange={setSelectedLogIds} onCreateSession={createSession} onDeleteSelected={() => setDeleteConfirmOpen(true)} onPreviewLog={previewGenerationLog} />
@@ -393,7 +421,7 @@ export default function VideoPage() {
                     <div className="thin-scrollbar flex flex-col rounded-lg border border-stone-200 bg-card p-4 shadow-sm dark:border-stone-800 lg:min-h-0 lg:overflow-y-auto">
                         <div className="flex items-start justify-between gap-3">
                             <h1 className="text-2xl font-semibold text-stone-950 dark:text-stone-100">视频创作台</h1>
-                            <div className="flex shrink-0 gap-2 lg:hidden">
+                            <div className="studio-generator-actions flex shrink-0 gap-2 lg:hidden">
                                 <Button icon={<History className="size-4" />} onClick={() => setLogsOpen(true)}>
                                     记录
                                 </Button>
@@ -419,7 +447,7 @@ export default function VideoPage() {
                                 <Input.TextArea value={prompt} onChange={(event) => setPrompt(event.target.value)} rows={7} placeholder="描述镜头运动、主体动作、场景氛围和画面风格" />
                             </div>
 
-                            <div className="min-w-0">
+                            <div id="video-reference-panel" className="min-w-0">
                                 <div className="mb-2 flex items-center justify-between gap-3">
                                     <span className="text-base font-semibold">参考图</span>
                                     <div className="flex gap-2">
@@ -464,7 +492,7 @@ export default function VideoPage() {
                                             </button>
                                         </div>
                                     ))}
-                                    {!videoReferences.length ? <div className="flex min-w-full items-center justify-center text-sm text-stone-500">暂无参考视频，最多 3 个</div> : null}
+                                    {!videoReferences.length ? <div className="flex min-w-full items-center justify-center text-sm text-stone-500">暂无参考视频，最多 {referenceLimitsForModel(model).videos} 个</div> : null}
                                 </div>
                             </div>
 
@@ -490,7 +518,7 @@ export default function VideoPage() {
                                             </button>
                                         </div>
                                     ))}
-                                    {!audioReferences.length ? <div className="flex min-w-full items-center justify-center text-center text-sm text-stone-500">暂无参考音频，最多 3 个，mp3/wav，单个 15MB 内</div> : null}
+                                    {!audioReferences.length ? <div className="flex min-w-full items-center justify-center text-center text-sm text-stone-500">暂无参考音频，最多 {referenceLimitsForModel(model).audios} 个，mp3/wav/m4a/aac/ogg，单个 {Math.floor(referenceLimitsForModel(model).audioMaxBytes / 1024 / 1024)}MB 内</div> : null}
                                 </div>
                             </div>
 
@@ -503,7 +531,7 @@ export default function VideoPage() {
                                 </Button>
                             </div>
 
-                            <div className="hidden gap-4 sm:grid sm:grid-cols-2">
+                            <div id="video-parameter-panel" className="hidden gap-4 sm:grid sm:grid-cols-2">
                                 <GenerationSettings config={effectiveConfig} model={model} updateConfig={updateConfig} openConfigDialog={openConfigDialog} />
                             </div>
                         </div>
@@ -536,7 +564,7 @@ export default function VideoPage() {
             <input
                 ref={fileInputRef}
                 type="file"
-                accept="image/*,video/mp4,video/quicktime,audio/mpeg,audio/wav,audio/x-wav,.mp3,.wav"
+                accept="image/*,video/mp4,video/webm,video/quicktime,audio/mpeg,audio/wav,audio/x-wav,audio/mp4,audio/aac,audio/ogg,.mp3,.wav,.m4a,.aac,.ogg"
                 multiple
                 className="hidden"
                 onChange={(event) => {
@@ -771,10 +799,15 @@ function serializeLog(log: GenerationLog): GenerationLog {
 }
 
 function isSupportedAudioFile(file: File) {
-    return file.type === "audio/mpeg" || file.type === "audio/mp3" || file.type === "audio/wav" || file.type === "audio/x-wav" || /\.(mp3|wav)$/i.test(file.name);
+    return ["audio/mpeg", "audio/mp3", "audio/wav", "audio/x-wav", "audio/mp4", "audio/aac", "audio/ogg"].includes(file.type) || /\.(mp3|wav|m4a|aac|ogg)$/i.test(file.name);
 }
 
-function filterAudioReferencesByDuration(existing: ReferenceAudio[], next: ReferenceAudio[], warn: (content: string) => void) {
+function referenceLimitsForModel(model: string) {
+    return isKkaiSeeddanceModel(model) ? KKAI_SEEDDANCE_REFERENCE_LIMITS : SEEDANCE_REFERENCE_LIMITS;
+}
+
+function filterAudioReferencesByDuration(existing: ReferenceAudio[], next: ReferenceAudio[], warn: (content: string) => void, enforceDuration = true) {
+    if (!enforceDuration) return next;
     let total = existing.reduce((sum, item) => sum + (item.durationMs || 0), 0);
     const accepted: ReferenceAudio[] = [];
     let skipped = false;
@@ -857,14 +890,15 @@ function buildLog({ prompt, model, config, references, videoReferences, audioRef
 }
 
 function buildVideoConfig(config: AiConfig, model: string): AiConfig {
+    const seeddance = isKkaiSeeddanceModel(model);
     const seedance = isSeedanceVideoConfig({ ...config, model });
     return {
         ...config,
         model,
         videoModel: model,
-        size: seedance ? normalizeSeedanceRatio(config.size) : normalizeVideoSize(config.size),
-        videoSeconds: normalizeVideoSeconds(config.videoSeconds),
-        vquality: normalizeResolution(config.vquality),
+        size: seeddance ? (config.size === "9:16" || config.size === "1:1" ? config.size : "16:9") : seedance ? normalizeSeedanceRatio(config.size) : normalizeVideoSize(config.size),
+        videoSeconds: seeddance ? String([5, 10, 15].includes(Number(config.videoSeconds)) ? Number(config.videoSeconds) : 5) : normalizeVideoSeconds(config.videoSeconds),
+        vquality: seeddance ? "720" : normalizeResolution(config.vquality),
         videoGenerateAudio: String(boolConfig(config.videoGenerateAudio, true)),
         videoWatermark: String(boolConfig(config.videoWatermark, false)),
     };

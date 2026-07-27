@@ -11,6 +11,8 @@ export const SEEDANCE_REFERENCE_LIMITS = {
     audioMaxBytes: 15 * 1024 * 1024,
 };
 
+export const SEEDDANCE_AUDIO_TYPES = new Set(["audio/mpeg", "audio/mp3", "audio/wav", "audio/x-wav", "audio/mp4", "audio/aac", "audio/ogg"]);
+
 export const seedanceResolutionOptions = [
     { value: "480p", label: "480p" },
     { value: "720p", label: "720p" },

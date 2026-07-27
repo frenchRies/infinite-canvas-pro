@@ -1,5 +1,5 @@
 import type { CSSProperties } from "react";
-import { BookOpen, Keyboard, Puzzle, Settings2 } from "lucide-react";
+import { BookOpen, Keyboard, Palette, Puzzle, Settings2 } from "lucide-react";
 
 import { AnimatedThemeToggler } from "@/components/ui/animated-theme-toggler";
 import { GitHubLink } from "@/components/layout/github-link";
@@ -20,6 +20,8 @@ type UserStatusActionsProps = {
 export function UserStatusActions({ showConfig = true, variant = "default", onOpenShortcuts, onOpenPlugins }: UserStatusActionsProps) {
     const theme = useThemeStore((state) => state.theme);
     const setTheme = useThemeStore((state) => state.setTheme);
+    const uiStyle = useThemeStore((state) => state.uiStyle);
+    const toggleUiStyle = useThemeStore((state) => state.toggleUiStyle);
     const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
     const canvasTheme = canvasThemes[theme];
     const naturalIconClass = "inline-flex size-7 shrink-0 items-center justify-center text-stone-600 transition hover:text-stone-950 dark:text-stone-300 dark:hover:text-white [&_svg]:size-4";
@@ -43,6 +45,10 @@ export function UserStatusActions({ showConfig = true, variant = "default", onOp
                     <Settings2 className="size-4" />
                 </button>
             ) : null}
+            <button type="button" className={cn(naturalIconClass, "gap-1 px-1.5 sm:w-auto sm:px-2")} style={iconStyle} onClick={toggleUiStyle} aria-label={uiStyle === "classic" ? "切换到工作室界面" : "切换到原版界面"} title={uiStyle === "classic" ? "切换到工作室界面" : "切换到原版界面"}>
+                <Palette className="size-4" />
+                <span className="hidden text-[11px] font-medium sm:inline">{uiStyle === "classic" ? "工作室" : "原版"}</span>
+            </button>
             <AnimatedThemeToggler theme={theme} onThemeChange={setTheme} className={naturalIconClass} style={iconStyle} aria-label={theme === "dark" ? "切换到浅色主题" : "切换到深色主题"} title={theme === "dark" ? "切换到浅色主题" : "切换到深色主题"} />
             <VersionReleaseModal style={versionStyle} />
             <GitHubLink className={cn("bg-transparent hover:bg-transparent dark:hover:bg-transparent", gitHubClassName)} style={gitHubStyle} />

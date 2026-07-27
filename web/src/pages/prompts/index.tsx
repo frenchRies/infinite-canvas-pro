@@ -38,6 +38,18 @@ export default function PromptsPage() {
         if (query.isError) message.error(query.error instanceof Error ? query.error.message : "获取提示词失败");
     }, [message, query.error, query.isError]);
 
+    useEffect(() => {
+        const handleStudioContext = (event: Event) => {
+            const detail = (event as CustomEvent<{ slug?: string; index?: number }>).detail;
+            if (detail.slug !== "prompts") return;
+            if (detail.index === 0) setActiveTab("library");
+            else if (detail.index === 1) setActiveTab("personal");
+            document.getElementById("prompts-filters")?.scrollIntoView({ behavior: "smooth", block: "start" });
+        };
+        window.addEventListener("studio-context-select", handleStudioContext);
+        return () => window.removeEventListener("studio-context-select", handleStudioContext);
+    }, []);
+
     const toggleTag = (tag: string) => {
         if (tag === ALL_PROMPTS_OPTION) return setSelectedTags([]);
         setSelectedTags((items) => (items.includes(tag) ? items.filter((item) => item !== tag) : [...items, tag]));
@@ -79,7 +91,7 @@ export default function PromptsPage() {
     const visibleCount = activeTab === "library" ? totalPrompts : filteredPersonalPrompts.length;
 
     return (
-        <div className="flex h-full flex-col overflow-hidden bg-background text-stone-800 dark:text-stone-100">
+        <div className="studio-library-page flex h-full flex-col overflow-hidden bg-background text-stone-800 dark:text-stone-100">
             <main className="min-h-0 flex-1 overflow-y-auto bg-background bg-[radial-gradient(#e5e7eb_1px,transparent_1px)] px-6 py-8 [background-size:16px_16px] dark:bg-[radial-gradient(rgba(245,245,244,.16)_1px,transparent_1px)]" onScroll={handleListScroll}>
                 <div className="mx-auto max-w-7xl pb-8">
                     <div className="flex flex-wrap items-end justify-between gap-4">
@@ -98,7 +110,7 @@ export default function PromptsPage() {
                         <Input size="large" prefix={<Search className="size-4 text-stone-400" />} value={titleKeyword} placeholder="搜索标题、内容或标签" onChange={(event) => setTitleKeyword(event.target.value)} />
                     </div>
                     {activeTab === "library" ? (
-                        <div className="mx-auto mt-6 grid max-w-6xl gap-3 text-left">
+                        <div id="prompts-filters" className="mx-auto mt-6 grid max-w-6xl gap-3 text-left">
                             <PromptFilter label="分类" options={promptCategoryOptions} selected={selectedCategory} onChange={setSelectedCategory} />
                             <div className="grid gap-2 sm:grid-cols-[56px_minmax(0,1fr)] sm:items-start">
                                 <div className="pt-2 text-xs font-medium text-stone-500 dark:text-stone-400">标签</div>

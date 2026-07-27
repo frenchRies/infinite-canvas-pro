@@ -1,5 +1,6 @@
 import type { ThemeConfig } from "antd";
 import { theme as antdTheme } from "antd";
+import type { UiStyle } from "@/stores/use-theme-store";
 
 const neutral = {
     light: {
@@ -28,19 +29,23 @@ const neutral = {
     },
 };
 
-export function getAntThemeConfig(dark: boolean): ThemeConfig {
+export function getAntThemeConfig(dark: boolean, uiStyle: UiStyle = "classic"): ThemeConfig {
     const color = dark ? neutral.dark : neutral.light;
+    const studio = uiStyle === "studio";
 
     return {
         algorithm: dark ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm,
         cssVar: { key: dark ? "infinite-canvas-dark" : "infinite-canvas-light" },
         token: {
-            colorPrimary: color.primary,
-            colorInfo: color.primary,
-            colorLink: color.primary,
-            colorLinkHover: color.primaryHover,
-            colorLinkActive: color.primary,
-            colorTextLightSolid: color.primaryText,
+            colorPrimary: studio ? (dark ? "#79d8c0" : "#147867") : color.primary,
+            colorInfo: studio ? (dark ? "#79d8c0" : "#147867") : color.primary,
+            colorLink: studio ? (dark ? "#abefdb" : "#147867") : color.primary,
+            colorLinkHover: studio ? (dark ? "#d1f7eb" : "#0e6657") : color.primaryHover,
+            colorLinkActive: studio ? (dark ? "#79d8c0" : "#147867") : color.primary,
+            colorTextLightSolid: studio ? "#ffffff" : color.primaryText,
+            borderRadius: studio ? 6 : undefined,
+            controlHeight: studio ? 34 : undefined,
+            fontFamily: studio ? '"SF Pro Text","PingFang SC","Microsoft YaHei",sans-serif' : undefined,
         },
         components: {
             Button: {

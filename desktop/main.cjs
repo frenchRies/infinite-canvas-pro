@@ -20,6 +20,8 @@ function createWindow(url) {
         minWidth: 1024,
         minHeight: 700,
         title: "无限画布",
+        titleBarStyle: "hiddenInset",
+        trafficLightPosition: { x: 14, y: 14 },
         webPreferences: {
             contextIsolation: true,
             nodeIntegration: false,

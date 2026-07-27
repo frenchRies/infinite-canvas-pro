@@ -2,6 +2,8 @@ import { type ReactNode } from "react";
 import { Switch } from "antd";
 
 import { ImageSettingsTheme } from "@/components/image-settings-panel";
+import { isGrokImagine15VideoModel } from "@/lib/grok-imagine-video";
+import { isKkaiSeeddanceModel, KKAI_SEEDDANCE_DURATIONS, KKAI_SEEDDANCE_RATIOS, normalizeKkaiSeeddanceDuration, normalizeKkaiSeeddanceRatio } from "@/lib/kkai-seeddance";
 import { boolConfig, isSeedanceFastModel, isSeedanceVideoConfig, normalizeSeedanceDuration, normalizeSeedanceRatio, normalizeSeedanceResolution, seedanceDurationOptions, seedancePixelLabel, seedanceRatioOptions, seedanceResolutionOptions } from "@/lib/seedance-video";
 import { type CanvasTheme } from "@/lib/canvas-theme";
 import { modelOptionName, type AiConfig } from "@/stores/use-config-store";
@@ -35,6 +37,12 @@ type VideoSettingsPanelProps = {
 };
 
 export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = true, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5" }: VideoSettingsPanelProps) {
+    if (isGrokImagine15VideoModel(config.videoModel || config.model)) {
+        return <GrokImagineVideoSettingsPanel config={config} onConfigChange={onConfigChange} theme={theme} showTitle={showTitle} className={className} />;
+    }
+    if (isKkaiSeeddanceModel(config.videoModel || config.model)) {
+        return <KkaiSeeddanceSettingsPanel config={config} onConfigChange={onConfigChange} theme={theme} showTitle={showTitle} className={className} />;
+    }
     if (isSeedanceVideoConfig(config)) {
         return <SeedanceVideoSettingsPanel config={config} onConfigChange={onConfigChange} theme={theme} showTitle={showTitle} className={className} />;
     }
@@ -97,6 +105,71 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
                             </OptionPill>
                         ))}
                         <NumberInput value={seconds} min={1} max={20} theme={theme} onChange={(value) => onConfigChange("videoSeconds", value)} />
+                    </div>
+                </SettingGroup>
+            </div>
+        </ImageSettingsTheme>
+    );
+}
+
+function KkaiSeeddanceSettingsPanel({ config, onConfigChange, theme, showTitle, className }: VideoSettingsPanelProps) {
+    const ratio = normalizeKkaiSeeddanceRatio(config.size);
+    const duration = normalizeKkaiSeeddanceDuration(config.videoSeconds);
+    const labels: Record<string, string> = { "16:9": "横屏", "9:16": "竖屏", "1:1": "方形" };
+    return (
+        <ImageSettingsTheme theme={theme}>
+            <div className={className} style={{ color: theme.node.text }} onMouseDown={(event) => event.stopPropagation()}>
+                {showTitle ? <div className="text-lg font-semibold">视频设置</div> : null}
+                <SettingGroup title="清晰度" color={theme.node.muted}>
+                    <div className="rounded-xl border px-3 py-2 text-sm" style={{ borderColor: theme.node.stroke }}>固定 720p</div>
+                </SettingGroup>
+                <SettingGroup title="画幅" color={theme.node.muted}>
+                    <div className="grid grid-cols-3 gap-2.5">
+                        {KKAI_SEEDDANCE_RATIOS.map((item) => (
+                            <button key={item} type="button" className="flex h-[72px] cursor-pointer flex-col items-center justify-center gap-1 rounded-xl border bg-transparent text-sm transition hover:opacity-80" style={{ borderColor: ratio === item ? theme.node.text : theme.node.stroke, color: theme.node.text }} onMouseDown={(event) => event.stopPropagation()} onClick={() => onConfigChange("size", item)}>
+                                <SizePreview width={ratioPreview(item).width} height={ratioPreview(item).height} color={theme.node.text} />
+                                <span>{labels[item]}</span>
+                                <span className="text-[10px] leading-none opacity-55">{item}</span>
+                            </button>
+                        ))}
+                    </div>
+                </SettingGroup>
+                <SettingGroup title="时长" color={theme.node.muted}>
+                    <div className="grid grid-cols-3 gap-2.5">
+                        {KKAI_SEEDDANCE_DURATIONS.map((value) => <OptionPill key={value} selected={duration === value} theme={theme} onClick={() => onConfigChange("videoSeconds", String(value))}>{value}s</OptionPill>)}
+                    </div>
+                </SettingGroup>
+            </div>
+        </ImageSettingsTheme>
+    );
+}
+
+function GrokImagineVideoSettingsPanel({ config, onConfigChange, theme, showTitle, className }: VideoSettingsPanelProps) {
+    const seconds = secondOptions.includes(Number(config.videoSeconds)) ? config.videoSeconds : "6";
+    const size = normalizeVideoSizeValue(config.size) === "720x1280" ? "720x1280" : "1280x720";
+    const grokSizes = sizeOptions.slice(0, 2);
+
+    return (
+        <ImageSettingsTheme theme={theme}>
+            <div className={className} style={{ color: theme.node.text }} onMouseDown={(event) => event.stopPropagation()}>
+                {showTitle ? <div className="text-lg font-semibold">视频设置</div> : null}
+                <SettingGroup title="清晰度" color={theme.node.muted}>
+                    <div className="rounded-xl border px-3 py-2 text-sm" style={{ borderColor: theme.node.stroke }}>固定 720p 高质量</div>
+                </SettingGroup>
+                <SettingGroup title="画幅" color={theme.node.muted}>
+                    <div className="grid grid-cols-2 gap-2.5">
+                        {grokSizes.map((item) => (
+                            <button key={item.value} type="button" className="flex h-[78px] cursor-pointer flex-col items-center justify-center gap-1 rounded-xl border bg-transparent text-sm transition hover:opacity-80" style={{ borderColor: size === item.value ? theme.node.text : theme.node.stroke, color: theme.node.text }} onMouseDown={(event) => event.stopPropagation()} onClick={() => onConfigChange("size", item.value)}>
+                                <SizePreview width={item.width} height={item.height} color={theme.node.text} />
+                                <span>{item.label}</span>
+                                <span className="text-[11px] leading-none opacity-55">{item.value}</span>
+                            </button>
+                        ))}
+                    </div>
+                </SettingGroup>
+                <SettingGroup title="时长" color={theme.node.muted}>
+                    <div className="grid grid-cols-3 gap-2.5">
+                        {secondOptions.map((value) => <OptionPill key={value} selected={seconds === String(value)} theme={theme} onClick={() => onConfigChange("videoSeconds", String(value))}>{value}s</OptionPill>)}
                     </div>
                 </SettingGroup>
             </div>

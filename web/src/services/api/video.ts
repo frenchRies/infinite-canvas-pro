@@ -5,12 +5,14 @@ import { dataUrlToFile } from "@/lib/image-utils";
 import { getMediaBlob, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { imageToDataUrl } from "@/services/image-storage";
 import { boolConfig, buildSeedancePromptText, isSeedanceVideoConfig, normalizeSeedanceDuration, normalizeSeedanceRatio, normalizeSeedanceResolution, seedanceVideoReferenceError, SEEDANCE_REFERENCE_LIMITS } from "@/lib/seedance-video";
+import { isGrokImagine15VideoModel } from "@/lib/grok-imagine-video";
+import { isKkaiSeeddanceModel, kkaiSeeddanceApiModel, KKAI_SEEDDANCE_REFERENCE_LIMITS, kkaiSeeddanceReferenceError, normalizeKkaiSeeddanceDuration, normalizeKkaiSeeddancePrompt, normalizeKkaiSeeddanceRatio } from "@/lib/kkai-seeddance";
 import { buildApiUrl, modelOptionName, resolveModelRequestConfig, resolveModelScript, type AiConfig } from "@/stores/use-config-store";
 import { runModelPlugin } from "./model-plugin";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 
-type VideoResponse = { id: string; status?: string; error?: { message?: string }; url?: string; result_url?: string; video_url?: string; content?: { video_url?: string; url?: string } | null };
+type VideoResponse = { id?: string; task_id?: string; status?: string; error?: { message?: string }; url?: string; result_url?: string; video_url?: string; metadata?: { url?: string } | null; content?: { video_url?: string; url?: string } | null };
 type ApiVideoResponse = VideoResponse | { code?: number | string; data?: VideoResponse | null; msg?: string; message?: string; error?: { message?: string } };
 type SeedanceTask = {
     id: string;
@@ -20,12 +22,13 @@ type SeedanceTask = {
     url?: string;
     result_url?: string;
     video_url?: string;
+    metadata?: { url?: string } | null;
 };
 type ApiEnvelope<T> = T | { code?: number | string; data?: T | null; msg?: string; message?: string; error?: { message?: string } };
 type RequestOptions = { signal?: AbortSignal };
 
 export type VideoGenerationResult = { blob?: Blob; url?: string; mimeType?: string };
-export type VideoGenerationTask = { id: string; provider: "openai" | "seedance" | "plugin"; model: string };
+export type VideoGenerationTask = { id: string; provider: "openai" | "seedance" | "seeddance" | "grok" | "plugin"; model: string };
 export type VideoGenerationTaskState = { status: "pending" } | { status: "completed"; result: VideoGenerationResult } | { status: "failed"; error: string };
 
 /** Results for scripted (plugin) video models, which run their own create+poll in one shot at task creation. */
@@ -44,7 +47,7 @@ function aiHeaders(config: AiConfig, contentType?: string) {
 
 export async function requestVideoGeneration(config: AiConfig, prompt: string, references: ReferenceImage[] = [], videoReferences: ReferenceVideo[] = [], audioReferences: ReferenceAudio[] = [], options?: RequestOptions): Promise<VideoGenerationResult> {
     const task = await createVideoGenerationTask(config, prompt, references, videoReferences, audioReferences, options);
-    const delayMs = task.provider === "seedance" ? 5000 : 2500;
+    const delayMs = task.provider === "seedance" || task.provider === "seeddance" || task.provider === "grok" ? 5000 : 2500;
     for (let attempt = 0; attempt < 120; attempt += 1) {
         if (options?.signal?.aborted) throw new DOMException("Aborted", "AbortError");
         const state = await pollVideoGenerationTask(config, task, options);
@@ -57,17 +60,19 @@ export async function requestVideoGeneration(config: AiConfig, prompt: string, r
 }
 
 export async function createVideoGenerationTask(config: AiConfig, prompt: string, references: ReferenceImage[] = [], videoReferences: ReferenceVideo[] = [], audioReferences: ReferenceAudio[] = [], options?: RequestOptions): Promise<VideoGenerationTask> {
-    const selectedModel = (config.model || config.videoModel).trim();
+    const selectedModel = (config.videoModel || config.model).trim();
     const requestConfig = resolveModelRequestConfig(config, selectedModel);
     const script = resolveModelScript(config, selectedModel);
     if (script) return createPluginVideoTask(requestConfig, selectedModel, script, prompt, references, options);
     assertVideoConfig(requestConfig, requestConfig.model);
+    if (isKkaiSeeddanceModel(requestConfig.model)) return createKkaiSeeddanceTask(requestConfig, selectedModel, prompt, references, videoReferences, audioReferences, options);
     if (isSeedanceVideoConfig(requestConfig)) {
         return createSeedanceTask(requestConfig, selectedModel, prompt, references, videoReferences, audioReferences, options);
     }
     if (videoReferences.length || audioReferences.length) {
         throw new Error("当前视频接口不支持参考视频或参考音频，请切换到 Seedance 2.0 / 火山 Agent Plan 模型，或移除参考资产");
     }
+    if (isGrokImagine15VideoModel(requestConfig.model)) return createGrokImagineVideoTask(requestConfig, selectedModel, prompt, references, options);
     return createOpenAIVideoTask(requestConfig, selectedModel, prompt, references, options);
 }
 
@@ -78,7 +83,10 @@ export async function pollVideoGenerationTask(config: AiConfig, task: VideoGener
     }
     const requestConfig = resolveModelRequestConfig(config, task.model);
     assertVideoConfig(requestConfig, requestConfig.model);
-    return task.provider === "seedance" ? pollSeedanceTask(requestConfig, task, options) : pollOpenAIVideoTask(requestConfig, task, options);
+    if (task.provider === "seedance") return pollSeedanceTask(requestConfig, task, options);
+    if (task.provider === "seeddance") return pollKkaiSeeddanceTask(requestConfig, task, options);
+    if (task.provider === "grok") return pollGrokImagineVideoTask(requestConfig, task, options);
+    return pollOpenAIVideoTask(requestConfig, task, options);
 }
 
 async function createPluginVideoTask(config: AiConfig, model: string, script: string, prompt: string, references: ReferenceImage[], options?: RequestOptions): Promise<VideoGenerationTask> {
@@ -151,6 +159,109 @@ async function createOpenAIVideoTask(config: AiConfig, model: string, prompt: st
     }
 }
 
+async function createGrokImagineVideoTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], options?: RequestOptions): Promise<VideoGenerationTask> {
+    if (!prompt.trim()) throw new Error("请输入视频提示词");
+    if (references.length > 7) throw new Error("Grok Imagine 1.5 Video 最多支持 7 张参考图");
+    const body = new FormData();
+    body.append("model", modelOptionName(model));
+    body.append("prompt", prompt.trim());
+    body.append("seconds", normalizeGrokImagineSeconds(config.videoSeconds));
+    body.append("size", normalizeGrokImagineSize(config.size));
+    body.append("quality", "high");
+    const files = await Promise.all(references.map(async (image) => dataUrlToFile({ ...image, dataUrl: await imageToDataUrl(image) })));
+    files.forEach((file) => {
+        if (!GROK_IMAGINE_REFERENCE_TYPES.has(file.type)) throw new Error("Grok Imagine 1.5 Video 参考图仅支持 JPEG、PNG 或 WebP");
+        if (file.size > GROK_IMAGINE_REFERENCE_MAX_BYTES) throw new Error("Grok Imagine 1.5 Video 单张参考图不能超过 20MB");
+        body.append("input_reference", file);
+    });
+    try {
+        const created = unwrapVideoResponse((await axios.post<ApiVideoResponse>(aiApiUrl(config, "/videos"), body, { headers: { ...aiHeaders(config), Accept: "application/json" }, signal: options?.signal })).data);
+        const id = created.task_id || created.id;
+        if (!id) throw new Error("Grok Imagine 1.5 Video 接口没有返回任务 ID");
+        return { id, provider: "grok", model };
+    } catch (error) {
+        throw new Error(readAxiosError(error, "Grok Imagine 1.5 Video 任务创建失败"));
+    }
+}
+
+async function createKkaiSeeddanceTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], videoReferences: ReferenceVideo[], audioReferences: ReferenceAudio[], options?: RequestOptions): Promise<VideoGenerationTask> {
+    const referenceError = kkaiSeeddanceReferenceError(references.length, videoReferences.length, audioReferences.length);
+    if (referenceError) throw new Error(referenceError);
+    const normalizedPrompt = normalizeKkaiSeeddancePrompt(prompt, references.length, videoReferences.length, audioReferences.length);
+    const media = await uploadKkaiSeeddanceMedia(config, references, videoReferences, audioReferences, options);
+    const body = {
+        model: kkaiSeeddanceApiModel(model),
+        prompt: normalizedPrompt,
+        images: media.images,
+        videos: media.videos,
+        audios: media.audios,
+        ratio: normalizeKkaiSeeddanceRatio(config.size),
+        duration: normalizeKkaiSeeddanceDuration(config.videoSeconds),
+        resolution: "720p",
+    };
+    try {
+        const created = unwrapVideoResponse((await axios.post<ApiVideoResponse>(aiApiUrl(config, "/videos"), body, { headers: { ...aiHeaders(config, "application/json"), Accept: "application/json" }, signal: options?.signal })).data);
+        const id = created.task_id || created.id;
+        if (!id) throw new Error("KKAI seeddance 接口没有返回任务 ID");
+        return { id, provider: "seeddance", model };
+    } catch (error) {
+        throw new Error(readAxiosError(error, "KKAI seeddance 任务创建失败"));
+    }
+}
+
+type KkaiUploadedMedia = { kind?: string; url?: string; data?: { kind?: string; url?: string } };
+
+async function uploadKkaiSeeddanceMedia(config: AiConfig, references: ReferenceImage[], videoReferences: ReferenceVideo[], audioReferences: ReferenceAudio[], options?: RequestOptions) {
+    const files = [
+        ...(await Promise.all(references.slice(0, KKAI_SEEDDANCE_REFERENCE_LIMITS.images).map(async (item, index) => ({ file: await kkaiReferenceBlob(item), kind: "image", index })))),
+        ...(await Promise.all(videoReferences.slice(0, KKAI_SEEDDANCE_REFERENCE_LIMITS.videos).map(async (item, index) => ({ file: await kkaiReferenceBlob(item), kind: "video", index })))),
+        ...(await Promise.all(audioReferences.slice(0, KKAI_SEEDDANCE_REFERENCE_LIMITS.audios).map(async (item, index) => ({ file: await kkaiReferenceBlob(item), kind: "audio", index })))),
+    ];
+    for (const item of files) {
+        const limit = item.kind === "image" ? KKAI_SEEDDANCE_REFERENCE_LIMITS.imageMaxBytes : item.kind === "video" ? KKAI_SEEDDANCE_REFERENCE_LIMITS.videoMaxBytes : KKAI_SEEDDANCE_REFERENCE_LIMITS.audioMaxBytes;
+        if (item.file.size > limit) throw new Error(`KKAI seeddance ${item.kind === "image" ? "参考图" : item.kind === "video" ? "参考视频" : "参考音频"}单个不能超过 ${Math.round(limit / 1024 / 1024)}MB`);
+    }
+    if (!files.length) return { images: [], videos: [], audios: [] };
+    const body = new FormData();
+    files.forEach((item) => body.append("files", item.file, item.file.name));
+    try {
+        const response = await axios.post<unknown>("https://video.kkone.vip/api/uploads", body, {
+            headers: { Accept: "application/json" },
+            signal: options?.signal,
+        });
+        const payload = response.data as { data?: unknown; files?: unknown; results?: unknown };
+        const entries = (Array.isArray(payload) ? payload : payload.files || payload.data || payload.results) as KkaiUploadedMedia[] | undefined;
+        if (!Array.isArray(entries) || entries.length !== files.length) throw new Error("KKAI 素材上传接口返回数量不一致");
+        const urls = entries.map((entry, index) => {
+            const item: { kind?: string; url?: string } = entry?.data && typeof entry.data === "object" ? entry.data : entry;
+            const url = item?.url;
+            if (typeof url !== "string" || !url) throw new Error(`KKAI 素材上传失败（第 ${index + 1} 个）`);
+            const kind = item?.kind === "image" || item?.kind === "video" || item?.kind === "audio" ? item.kind : files[index].kind;
+            return { kind, url };
+        });
+        return {
+            images: urls.filter((item) => item.kind === "image").map((item) => item.url),
+            videos: urls.filter((item) => item.kind === "video").map((item) => item.url),
+            audios: urls.filter((item) => item.kind === "audio").map((item) => item.url),
+        };
+    } catch (error) {
+        throw new Error(readAxiosError(error, "KKAI 参考素材上传失败"));
+    }
+}
+
+async function kkaiReferenceBlob(item: ReferenceImage | ReferenceVideo | ReferenceAudio) {
+    if ("dataUrl" in item) {
+        const dataUrl = await imageToDataUrl(item);
+        if (!dataUrl) throw new Error("参考图读取失败，请重新上传");
+        return new File([await (await fetch(dataUrl)).blob()], item.name, { type: item.type || "image/png" });
+    }
+    let blob: Blob | null = null;
+    if (item.storageKey) blob = await getMediaBlob(item.storageKey);
+    if (!blob && item.url) blob = await (await fetch(item.url)).blob();
+    if (!blob) throw new Error(`参考${"durationMs" in item ? "媒体" : "文件"}读取失败，请重新上传`);
+    return new File([blob], item.name, { type: item.type || blob.type || "application/octet-stream" });
+}
+
 async function pollOpenAIVideoTask(config: AiConfig, task: VideoGenerationTask, options?: RequestOptions): Promise<VideoGenerationTaskState> {
     try {
         const video = unwrapVideoResponse((await axios.get<ApiVideoResponse>(aiApiUrl(config, `/videos/${task.id}`), { headers: aiHeaders(config), signal: options?.signal })).data);
@@ -165,6 +276,38 @@ async function pollOpenAIVideoTask(config: AiConfig, task: VideoGenerationTask, 
         return { status: "pending" };
     } catch (error) {
         throw new Error(readAxiosError(error, "视频任务查询失败"));
+    }
+}
+
+async function pollGrokImagineVideoTask(config: AiConfig, task: VideoGenerationTask, options?: RequestOptions): Promise<VideoGenerationTaskState> {
+    try {
+        const video = unwrapVideoResponse((await axios.get<ApiVideoResponse>(aiApiUrl(config, `/videos/${encodeURIComponent(task.id)}`), { headers: { ...aiHeaders(config), Accept: "application/json" }, signal: options?.signal })).data);
+        const status = video.status?.toLowerCase();
+        if (status === "success" || status === "succeeded" || status === "completed") {
+            const content = await axios.get<Blob>(aiApiUrl(config, `/videos/${encodeURIComponent(task.id)}/content`), { headers: aiHeaders(config), responseType: "blob", signal: options?.signal });
+            await assertVideoBlob(content.data);
+            return { status: "completed", result: { blob: content.data } };
+        }
+        if (status === "failed" || status === "failure") return { status: "failed", error: readApiErrorMessage(video.error?.message) || "Grok Imagine 1.5 Video 生成失败" };
+        return { status: "pending" };
+    } catch (error) {
+        throw new Error(readAxiosError(error, "Grok Imagine 1.5 Video 任务查询失败"));
+    }
+}
+
+async function pollKkaiSeeddanceTask(config: AiConfig, task: VideoGenerationTask, options?: RequestOptions): Promise<VideoGenerationTaskState> {
+    try {
+        const video = unwrapVideoResponse((await axios.get<ApiVideoResponse>(aiApiUrl(config, `/videos/${encodeURIComponent(task.id)}`), { headers: { ...aiHeaders(config), Accept: "application/json" }, signal: options?.signal })).data);
+        const status = video.status?.toLowerCase();
+        if (status === "success" || status === "succeeded" || status === "completed") {
+            const content = await axios.get<Blob>(aiApiUrl(config, `/videos/${encodeURIComponent(task.id)}/content`), { headers: aiHeaders(config), responseType: "blob", signal: options?.signal });
+            await assertVideoBlob(content.data);
+            return { status: "completed", result: { blob: content.data } };
+        }
+        if (status === "failed" || status === "failure") return { status: "failed", error: readApiErrorMessage(video.error?.message) || "KKAI seeddance 生成失败" };
+        return { status: "pending" };
+    } catch (error) {
+        throw new Error(readAxiosError(error, "KKAI seeddance 任务查询失败"));
     }
 }
 
@@ -299,6 +442,19 @@ function normalizeVideoSeconds(value: string) {
     return String(Math.max(1, Math.min(20, seconds)));
 }
 
+const GROK_IMAGINE_SECONDS = [6, 10, 12, 16, 20];
+const GROK_IMAGINE_REFERENCE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
+const GROK_IMAGINE_REFERENCE_MAX_BYTES = 20 * 1024 * 1024;
+
+function normalizeGrokImagineSeconds(value: string) {
+    const seconds = Number(value);
+    return String(GROK_IMAGINE_SECONDS.includes(seconds) ? seconds : 6);
+}
+
+function normalizeGrokImagineSize(value: string) {
+    return value === "720x1280" || ["9:16", "2:3", "3:4"].includes(value) ? "720x1280" : "1280x720";
+}
+
 function normalizeVideoSize(value: string) {
     if (value === "auto") return null;
     const size = value || "1280x720";
@@ -332,7 +488,7 @@ function unwrapEnvelope<T>(payload: ApiEnvelope<T>, emptyMessage: string): T {
 }
 
 function videoResultUrl(payload: VideoResponse | SeedanceTask) {
-    return [payload.video_url, payload.result_url, payload.url, payload.content?.video_url, payload.content?.url].find((url) => typeof url === "string" && (isPublicMediaUrl(url) || /\.mp4(\?|#|$)/i.test(url)));
+    return [payload.video_url, payload.result_url, payload.url, payload.metadata?.url, payload.content?.video_url, payload.content?.url].find((url) => typeof url === "string" && (isPublicMediaUrl(url) || /\.mp4(\?|#|$)/i.test(url)));
 }
 
 function readApiErrorMessage(value: unknown): string {

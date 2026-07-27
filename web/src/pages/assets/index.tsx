@@ -75,6 +75,18 @@ export default function AssetsPage() {
         setPage((value) => Math.min(value, maxPage));
     }, [filteredAssets.length, pageSize]);
 
+    useEffect(() => {
+        const handleStudioContext = (event: Event) => {
+            const detail = (event as CustomEvent<{ slug?: string; index?: number }>).detail;
+            if (detail.slug !== "assets") return;
+            setPage(1);
+            setKindFilter(detail.index === 2 ? "text" : "all");
+            document.getElementById("assets-grid")?.scrollIntoView({ behavior: "smooth", block: "start" });
+        };
+        window.addEventListener("studio-context-select", handleStudioContext);
+        return () => window.removeEventListener("studio-context-select", handleStudioContext);
+    }, []);
+
     const openCreate = () => {
         setEditingAsset(null);
         setImageDraft(null);
@@ -186,7 +198,7 @@ export default function AssetsPage() {
     };
 
     return (
-        <div className="flex h-full flex-col overflow-hidden bg-background text-stone-900 dark:text-stone-100">
+        <div className="studio-library-page flex h-full flex-col overflow-hidden bg-background text-stone-900 dark:text-stone-100">
             <main className="min-h-0 flex-1 overflow-y-auto bg-[radial-gradient(#e5e7eb_1px,transparent_1px)] px-6 py-8 [background-size:16px_16px] dark:bg-[radial-gradient(rgba(245,245,244,.14)_1px,transparent_1px)]">
                 <div className="pb-8">
                     <div className="mx-auto max-w-5xl text-center">
@@ -261,7 +273,7 @@ export default function AssetsPage() {
                 </div>
 
                 <div className="mx-auto flex max-w-7xl flex-col gap-5">
-                    <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                    <div id="assets-grid" className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                         {visibleAssets.map((asset) => (
                             <AssetCard key={asset.id} asset={asset} onOpen={() => setPreviewAsset(asset)} onEdit={() => openEdit(asset)} onCopy={copyAssetText} onDownload={downloadImage} onDelete={() => setDeletingAsset(asset)} />
                         ))}

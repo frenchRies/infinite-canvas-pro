@@ -32,7 +32,7 @@ export function startHttpServer() {
         next();
     });
     app.get("/health", (_req, res) => res.json(session.health()));
-    app.get("/config", (_req, res) => res.json({ ok: true, url: config.url, hasToken: true }));
+    app.get("/config", (req, res) => res.json({ ok: true, url: config.url, hasToken: true, ...(isLoopbackOrigin(req.headers.origin) ? { token: config.token } : {}) }));
     app.use((req, res, next) => {
         if (validToken(req, requestUrl(req, config), config.token)) return next();
         res.status(401).json({ ok: false, error: "invalid token" });
@@ -214,6 +214,15 @@ function setCors(req: Request, res: Response, url: URL, config: CanvasAgentConfi
 function validToken(req: Request, url: URL, token: string) {
     const header = req.headers["x-canvas-agent-token"];
     return url.searchParams.get("token") === token || header === token || (Array.isArray(header) && header.includes(token));
+}
+
+function isLoopbackOrigin(origin?: string) {
+    if (!origin) return false;
+    try {
+        return ["localhost", "127.0.0.1", "[::1]"].includes(new URL(origin).hostname);
+    } catch {
+        return false;
+    }
 }
 
 function withAttachmentContext(prompt: string, attachments: Array<{ id: string; name: string }>) {

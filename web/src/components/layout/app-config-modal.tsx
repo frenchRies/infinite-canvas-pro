@@ -1,4 +1,4 @@
-import { App, Button, Form, Input, Modal, Progress, Select, Tabs } from "antd";
+import { App, Button, Form, Input, Modal, Progress, Segmented, Select, Tabs } from "antd";
 import { Cloud, Pencil, Plus, RefreshCw, Trash2, Wifi } from "lucide-react";
 import { useEffect, useState } from "react";
 
@@ -8,7 +8,8 @@ import { ConfigPromptSources } from "@/components/layout/config-prompt-sources";
 import { syncAppDataToWebdav, type AppSyncDomainKey, type AppSyncProgressEvent } from "@/services/app-sync";
 import { testWebdavConnection, WEBDAV_MANIFEST_FILE_NAME } from "@/services/webdav-sync";
 import { audioFormatOptions, audioVoiceOptions, normalizeAudioSpeedValue } from "@/lib/audio-generation";
-import { createModelChannel, modelOptionsFromChannels, normalizeModelOptionValue, selectableModelsByCapability, useConfigStore, type AiConfig, type ApiCallFormat, type ConfigTabKey, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
+import { useThemeStore, type UiStyle } from "@/stores/use-theme-store";
+import { createModelChannel, KKAI_VIDEO_MODELS, modelOptionsFromChannels, normalizeModelOptionValue, selectableModelsByCapability, useConfigStore, type AiConfig, type ApiCallFormat, type ConfigTabKey, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
 
 type ModelGroup = {
     capability: ModelCapability;
@@ -58,6 +59,8 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
     const [webdavSyncStatus, setWebdavSyncStatus] = useState("");
     const [webdavDomainProgress, setWebdavDomainProgress] = useState(createWebdavDomainProgress);
     const config = useConfigStore((state) => state.config);
+    const uiStyle = useThemeStore((state) => state.uiStyle);
+    const setUiStyle = useThemeStore((state) => state.setUiStyle);
     const webdav = useConfigStore((state) => state.webdav);
     const updateConfig = useConfigStore((state) => state.updateConfig);
     const updateWebdavConfig = useConfigStore((state) => state.updateWebdavConfig);
@@ -67,6 +70,17 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
     const webdavReady = Boolean(webdav.url.trim());
     const editingChannel = config.channels.find((channel) => channel.id === editingChannelId) || null;
     useEffect(() => setActiveTab(initialTab), [initialTab]);
+
+    useEffect(() => {
+        const handleStudioContext = (event: Event) => {
+            const detail = (event as CustomEvent<{ slug?: string; index?: number }>).detail;
+            if (detail.slug !== "config") return;
+            const tabByIndex: ConfigTabKey[] = ["channels", "preferences", "webdav"];
+            setActiveTab(tabByIndex[detail.index || 0] || "channels");
+        };
+        window.addEventListener("studio-context-select", handleStudioContext);
+        return () => window.removeEventListener("studio-context-select", handleStudioContext);
+    }, []);
 
     const saveConfig = (nextConfig: AiConfig) => {
         (Object.keys(nextConfig) as Array<keyof AiConfig>).forEach((key) => updateConfig(key, nextConfig[key]));
@@ -81,6 +95,19 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
     };
 
     const updateChannels = (channels: ModelChannel[]) => saveConfig(withChannels(config, channels));
+
+    useEffect(() => {
+        const nextChannels = config.channels.map((channel) => {
+            const isKkai = channel.baseUrl.trim().replace(/\/+$/, "").toLowerCase() === "https://api.kkone.vip";
+            if (!isKkai) return channel;
+            const migrated = channel.models.map((model) => (model.name.trim().toLowerCase() === "seeddance" ? { ...model, name: "video-v2" } : model));
+            const existing = new Set(migrated.map((model) => model.name.trim().toLowerCase()));
+            const missing = KKAI_VIDEO_MODELS.filter((name) => !existing.has(name)).map((name) => ({ name, capability: "video" as const }));
+            const nextModels = [...migrated, ...missing].filter((model, index, list) => list.findIndex((item) => item.name.trim().toLowerCase() === model.name.trim().toLowerCase()) === index);
+            return nextModels.length !== channel.models.length || nextModels.some((model, index) => model.name !== channel.models[index]?.name) ? { ...channel, models: nextModels } : channel;
+        });
+        if (nextChannels.some((channel, index) => channel !== config.channels[index])) updateChannels(nextChannels);
+    }, [config.channels]);
 
     const addChannel = () => {
         const channel = createModelChannel({ name: `渠道 ${config.channels.length + 1}` });
@@ -194,6 +221,10 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                         label: "偏好设置",
                         children: (
                             <Form layout="vertical" requiredMark={false}>
+                                <div className="mb-2 text-sm font-semibold">界面外观</div>
+                                <Form.Item label="界面风格" extra="可随时切换，工作室风格不会改变画布和生成数据。" className="mb-5">
+                                    <Segmented value={uiStyle} options={[{ label: "原版", value: "classic" }, { label: "工作室", value: "studio" }]} onChange={(value) => setUiStyle(value as UiStyle)} />
+                                </Form.Item>
                                 <div className="mb-2 text-sm font-semibold">默认模型</div>
                                 <div className="mb-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
                                     {modelGroups.map((group) => (

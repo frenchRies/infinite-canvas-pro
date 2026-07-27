@@ -130,7 +130,8 @@ type ConfigStore = {
     clearPromptContinue: () => void;
 };
 
-const VIDEO_KEYWORDS = ["seedance", "video", "sora", "veo", "kling", "wan", "hailuo"];
+const VIDEO_KEYWORDS = ["seedance", "seeddance", "video", "sora", "veo", "kling", "wan", "hailuo"];
+export const KKAI_VIDEO_MODELS = ["video-v1", "video-v2", "video-v2-fast"] as const;
 const AUDIO_KEYWORDS = ["audio", "tts", "speech", "voice", "music", "sound"];
 const IMAGE_KEYWORDS = ["seedream", "gpt-image", "image", "dall-e", "dalle", "imagen", "flux", "sdxl", "stable-diffusion", "midjourney"];
 
@@ -293,11 +294,21 @@ export function modelOptionName(value: string) {
     return decodeChannelModel(value)?.model || value;
 }
 
+export function modelDisplayName(value: string) {
+    const name = modelOptionName(value).trim().toLowerCase();
+    if (name === "video-v1") return "seeddance-1.0";
+    if (name === "video-v2") return "seeddance-2.0";
+    if (name === "video-v2-fast") return "seeddance-2.0-fast";
+    if (name === "seeddance") return "seeddance-2.0";
+    return modelOptionName(value);
+}
+
 export function modelOptionLabel(config: AiConfig, value: string) {
     const decoded = decodeChannelModel(value);
     if (!decoded) return value;
     const channel = config.channels.find((item) => item.id === decoded.channelId);
-    return channel ? `${decoded.model}（${channel.name}）` : decoded.model;
+    const label = modelDisplayName(decoded.model);
+    return channel ? `${label}（${channel.name}）` : label;
 }
 
 export function modelOptionsFromChannels(channels: ModelChannel[]) {
@@ -336,14 +347,16 @@ export function resolveModelRequestConfig(config: AiConfig, value: string) {
 
 function normalizeChannels(config: AiConfig) {
     const persistedChannels = Array.isArray(config.channels) ? config.channels : [];
-    const channels = persistedChannels.map((channel, index) =>
-        createModelChannel({
+    const channels = persistedChannels.map((channel, index) => {
+        const models = normalizeChannelModels(channel.models);
+        const isKkai = channel.baseUrl?.trim().replace(/\/+$/, "").toLowerCase() === "https://api.kkone.vip";
+        return createModelChannel({
             ...channel,
             id: channel.id || (index === 0 ? "default" : `channel-${index + 1}`),
             name: channel.name || (index === 0 ? "默认渠道" : `渠道 ${index + 1}`),
-            models: normalizeChannelModels(channel.models),
-        }),
-    );
+            models: isKkai ? addMissingKkaiVideoModels(models) : models,
+        });
+    });
     if (!channels.length) {
         channels.push(
             createModelChannel({
@@ -357,6 +370,13 @@ function normalizeChannels(config: AiConfig) {
         );
     }
     return channels;
+}
+
+function addMissingKkaiVideoModels(models: ChannelModel[]) {
+    const migrated = models.map((model) => (model.name.trim().toLowerCase() === "seeddance" ? { ...model, name: "video-v2" } : model));
+    const normalized = normalizeChannelModels(migrated);
+    const existing = new Set(normalized.map((model) => model.name.toLowerCase()));
+    return [...normalized, ...KKAI_VIDEO_MODELS.filter((name) => !existing.has(name)).map((name) => ({ name, capability: "video" as const }))];
 }
 
 export function defaultBaseUrlForApiFormat(apiFormat: ApiCallFormat) {

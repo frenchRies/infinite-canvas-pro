@@ -257,6 +257,30 @@ function parseImagePayload(payload: ImageApiResponse) {
     return images;
 }
 
+function parseGptImage2Payload(payload: ImageApiResponse) {
+    if (typeof payload.code === "number" && payload.code !== 0) throw new Error(payload.msg || "请求失败");
+    const images = payload.data?.map((item) => {
+        if (typeof item.b64_json === "string" || (typeof item.url === "string" && item.url.startsWith("data:"))) throw new Error("gpt-image-2 接口返回了 URL-only 规范禁止的 base64 图片");
+        return item.url;
+    }).map((url) => {
+        if (typeof url !== "string" || !/^https?:\/\//i.test(url)) throw new Error("gpt-image-2 接口必须返回 HTTP(S) 图片 URL");
+        return { id: nanoid(), dataUrl: url };
+    }) || [];
+    if (!images.length) throw new Error("gpt-image-2 接口没有返回图片 URL");
+    return images;
+}
+
+function isGptImage2(model: string) {
+    return model.trim().toLowerCase() === "gpt-image-2";
+}
+
+function gptImage2Params(config: AiConfig) {
+    return {
+        quality: normalizeQuality(config.quality) || "auto",
+        size: resolveRequestSize(undefined, config.size) || "1024x1024",
+    };
+}
+
 function readAxiosError(error: unknown, fallback: string) {
     if (axios.isCancel(error)) return "请求已取消";
     if (axios.isAxiosError<{ error?: { message?: string }; msg?: string; code?: number }>(error)) {
@@ -689,6 +713,23 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
             throw new Error(readAxiosError(error, "请求失败"));
         }
     }
+    if (isGptImage2(requestConfig.model)) {
+        const { quality, size } = gptImage2Params(config);
+        const images = [];
+        try {
+            for (let index = 0; index < Math.min(n, 10); index += 1) {
+                const response = await axios.post<ImageApiResponse>(
+                    aiApiUrl(requestConfig, "/images/generations"),
+                    { model: "gpt-image-2", prompt: withSystemPrompt(requestConfig, prompt), n: 1, size, quality, response_format: "url" },
+                    { headers: aiHeaders(requestConfig, "application/json"), signal: options?.signal },
+                );
+                images.push(...parseGptImage2Payload(response.data));
+            }
+            return images;
+        } catch (error) {
+            throw new Error(readAxiosError(error, "请求失败"));
+        }
+    }
     const quality = normalizeQuality(config.quality);
     const requestSize = resolveRequestSize(quality, config.size);
     const background = normalizeBackground(config.background);
@@ -746,6 +787,29 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
         if (mask) throw new Error("Gemini 调用格式暂不支持蒙版编辑");
         try {
             return await requestGeminiImages(requestConfig, requestPrompt, references, n, options);
+        } catch (error) {
+            throw new Error(readAxiosError(error, "请求失败"));
+        }
+    }
+    if (isGptImage2(requestConfig.model)) {
+        const { quality, size } = gptImage2Params(config);
+        const files = await Promise.all(references.map(async (image) => dataUrlToFile({ ...image, dataUrl: await imageToDataUrl(image) })));
+        const images = [];
+        try {
+            for (let requestIndex = 0; requestIndex < Math.min(n, 10); requestIndex += 1) {
+                const formData = new FormData();
+                formData.set("model", "gpt-image-2");
+                formData.set("prompt", withSystemPrompt(requestConfig, requestPrompt));
+                formData.set("n", "1");
+                formData.set("size", size);
+                formData.set("quality", quality);
+                formData.set("response_format", "url");
+                files.forEach((file, index) => formData.append(files.length === 1 ? "image" : `image[${index}]`, file));
+                if (mask) formData.set("mask", dataUrlToFile(mask));
+                const response = await axios.post<ImageApiResponse>(aiApiUrl(requestConfig, "/images/edits"), formData, { headers: aiHeaders(requestConfig), signal: options?.signal });
+                images.push(...parseGptImage2Payload(response.data));
+            }
+            return images;
         } catch (error) {
             throw new Error(readAxiosError(error, "请求失败"));
         }
