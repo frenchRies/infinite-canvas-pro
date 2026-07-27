@@ -1,6 +1,6 @@
 {
     "name": "infinite-canvas-desktop",
-    "version": "0.9.0",
+    "version": "0.10.0",
     "private": true,
     "description": "Infinite Canvas macOS desktop application",
     "main": "main.cjs",
